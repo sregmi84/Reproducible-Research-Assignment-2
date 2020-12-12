@@ -1,0 +1,278 @@
+---
+title: "Coursera Reproducible Research Assignment 2"
+author: "Surabh"
+date: "12/11/2020"
+output: html_document
+keep_md: true
+---
+
+```{r setup, include=TRUE}
+    library(knitr)
+    knitr::opts_chunk$set(echo = TRUE, results="hide")
+```
+
+# Analyzing the Impact of Severe Weather Events on Public Health and the Economy in the United States, 1950-2011
+
+## 1. Synopsis
+
+Using data collected by the U.S. National Oceanic and Atmospheric Administration (NOAA), we will examine the effects of weather events on public heath and the economy.Impact on population health will be measured in terms of number of fatalities and injuries, and economic consequences will be measured in terms of the estimated dollar value of the damage caused. The dollar values will be adjusted for inflation using Consumer Price Index data obtained from the U.S. Bureau of Labor Statistics website.
+
+The NOAA storm database will be downloaded, pre-processed, analyzed and reported using R and explanations are included for estimates, assumptions and other data sources.
+
+Tornadoes have caused the highest number of both fatalities and injuries, and floods have caused the highest value of property/crop damage in the United States from 1950 through 2011.  
+
+## 2. Data Loading
+
+The data can be downloaded from the following location:
+
+[Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+
+Once downloaded, the file will need to be unzipped using the R.Utils package and read into R using the read.csv function.
+
+Note: Please set the working directory to your relevant folder first.
+
+### 2.1 Download and Unzip Data File
+```{r downloadFile, cache=TRUE}
+    setwd("~/Coursera/Reproducible Research/Week 4/Reproducible-Research-Assignment-2")
+    url1 <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+    destfile1 <- "repdata_data_StormData.csv.bz2"
+    
+    library(R.utils)
+    if(!file.exists(destfile1)) {
+        download.file(url1, 
+                      destfile = destfile1, 
+                      method = "curl")
+    }
+    
+    csvfileName <- gsub(".bz2","",destfile1,)
+    csvfileFullPath <- paste("./Data",csvfileName,sep="/")
+    
+    if(!file.exists(csvfileFullPath)) {
+        bunzip2(filename = destfile1, destname = csvfileFullPath,remove=FALSE,skip = TRUE)
+    }
+```
+
+### 2.2 Read Data File
+```{r readData, cache=TRUE}
+    stormDataFull<-read.csv(csvfileFullPath, header=TRUE, stringsAsFactors=FALSE) 
+    #dim(stormDataFUll)
+    #head(stormDataFull)
+    #str(stormDataFull)
+    countRows<-nrow(stormDataFull)
+    countCols<-ncol(stormDataFull)
+```
+
+There are **`r countRows`** *rows* and **`r countCols`** *columns* in the data.  
+
+## 3. Processing Data
+An explanation of the different fields that are available is given in this document:
+
+https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf  
+Click [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) to open the document.
+
+Note: Page 6 lists the different event types
+
+The following seven fields in the data are most relevant for our analysis:
+
+<table>
+<tr>
+<td>EVTYPE</td>
+<td>the type of severe weather event, such as tornado or hurricane.</td>
+</tr>
+<tr>
+<td>FATALITIES</td>
+<td>the number of deaths, if any, caused by the event.</td>
+</tr>
+<tr>
+<td>INJURIES</td>
+<td>the number of injuries, if any, caused by the event.</td>
+</tr>
+<td>PROPDMG</td>
+<td>the mantissa of the value of property damaged, in dollars.</td>
+</tr>
+<tr>
+<td>PROPDMGEXP</td>
+<td>the exponent of the value of property damaged. This varies in format, but is generally a text string.</td>
+</tr>
+<tr>
+<td>CROPDMG</td>
+<td>the mantissa of the value of crops damaged, in dollars.</td>
+</tr>
+<tr>
+<td>CROPDMGEXP</td>
+<td>the exponent of the value of property damaged. This varies in format, but is generally a text string.</td>
+</tr>
+</table>  
+
+These US Dollar amounts will be corrected for inflation using Consumer Price Index data obtained from the U.S. Bureau of Labor Statistics website.
+
+### 3.1 Cleaning Data
+We subset the data to relevant fields only. We create the Year field from BGN_DATE field to merge inflation adjustment data later. We remove 2 observations from unknown State as denoted by "XX".We compute crop and property damages based on the corresponding exponents. Damages corresponding to unknown exponents ("?" for crop damages and "?" and "-" for property damages) are resolved to 0. We group some of the events that are similar to the same category (See section from the of code below for details). There is potential to refine this further in the future if needed.
+
+```{r dataProcessing, cache=TRUE}
+    #Keep only essential columns
+    fieldsToKeep<-c("STATE__","STATE","BGN_DATE","EVTYPE","FATALITIES","INJURIES","PROPDMG", "PROPDMGEXP","CROPDMG","CROPDMGEXP","REFNUM")
+    stormData <- stormDataFull[fieldsToKeep]
+    #dim(stormData)
+    #head(stormData)
+    #str(stormData)
+
+    #Create Date and Year variable
+    library(lubridate)
+    stormData$BGN_DATE <- with(stormData,as.Date(BGN_DATE, format="%m/%d/%Y"))   
+    stormData$BGN_YEAR <- with(stormData,year(BGN_DATE)) 
+    table(stormData$BGN_YEAR)
+    unique(stormData$EVTYPE)
+
+    #Remove Unknown State (XX)
+    unique(stormData[c("STATE__","STATE")])
+    stormDataClean <- subset(stormData,!(STATE=="XX"))
+
+    #Calculate Crop Damage and Property Damage based on exponents
+    unique(stormDataClean$PROPDMGEXP)
+    unique(stormDataClean$CROPDMGEXP)
+
+    library(dplyr)
+    stormDataClean <- stormDataClean %>%
+        #Do nothing if exponent is blank or 0. If exponent is ? change value to 0.
+        mutate(CROPDMG = ifelse(CROPDMGEXP == "?", 0, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "2", CROPDMG * 100, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "k", CROPDMG * 1000, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "K", CROPDMG * 1000, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "m", CROPDMG * 1000000, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "M", CROPDMG * 1000000, CROPDMG),
+               CROPDMG = ifelse(CROPDMGEXP == "B", CROPDMG * 1000000000, CROPDMG)
+               ) %>%
+        #Do nothing if exponent is blank or 0 or +. If exponent is ? change value to 0. ALso - could mean blank or negative value which can't be right, so change to 0.
+        mutate(PROPDMG = ifelse(PROPDMGEXP == "?", 0, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "-", 0, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "1", PROPDMG * 10, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "2", PROPDMG * 100, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "3", PROPDMG * 1000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "4", PROPDMG * 10000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "5", PROPDMG * 100000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "6", PROPDMG * 1000000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "7", PROPDMG * 10000000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "8", PROPDMG * 100000000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "h", PROPDMG * 100, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "H", PROPDMG * 100, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "K", PROPDMG * 1000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "m", PROPDMG * 1000000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "M", PROPDMG * 1000000, PROPDMG),
+               PROPDMG = ifelse(PROPDMGEXP == "B", PROPDMG * 1000000000, PROPDMG))
+    
+        #Group Similar Event Types into same category 
+        library(stringr)
+        stormDataClean <- stormDataClean[] %>% mutate(EVCATEGORY = str_to_lower(EVTYPE)) %>% 
+               mutate(EVCATEGORY = str_trim(EVCATEGORY, side = "both")) %>%
+               mutate(EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "tstm", replacement = "thunderstorm"),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "\\s\\(g\\d*\\)", replacement = ""),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "^heat", replacement = "excessive heat"),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "wild/forest fire", replacement = "wildfire"),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "strong wind", replacement = "high wind"),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "winter weather", replacement = "winter storm"),
+                      EVCATEGORY = str_replace_all(EVCATEGORY, pattern = "^hurricane$", replacement = "hurricane/typhoon")) %>%
+               mutate(EVCATEGORY = str_to_title(EVCATEGORY))
+```
+
+### 3.2 Adjust Damages for Inflation
+The inflation data is obtained from the U.S. Bureau of Labor Statistics (BLS) and the method used to calculate the inflation adjustment is described by the BLS on their website. The data series used is “All items in U.S. city average, all urban consumers, not seasonally adjusted”, noted by series_id “CUUR000SA0”. We use the M12 (month 12 or December) values as a proxy for the value for the given year and merge the values by year.
+We adjust the Crop and Property damages and combine them to get the total damages adjusted for inflation.
+
+```{r adjustInflation, cache=TRUE}
+    #Read in Inflation data from BLS website
+    CPI <- read.csv("https://download.bls.gov/pub/time.series/cu/cu.data.1.AllItems", 
+                    stringsAsFactors = FALSE, header = TRUE, sep = "")
+    
+    #Annual average "M13" is not available for early years so use the end of year "M12" values
+    CPI <- CPI %>%
+        filter(series_id == "CUUR0000SA0", (year >= 1950 & year <= 2011), period == "M12") %>%
+        mutate(multiplier = value[year == 2011]/value) %>%
+        select(2, 6)
+
+    #Merge CPI data with the clean storm data
+    stormDataClean <- merge(x = stormDataClean, y = CPI, by.x = "BGN_YEAR", by.y="year", all.x = TRUE)
+    
+    #Adjust Crop and Property Damage for Inflation using CPI data
+    stormDataClean$CROPDMGADJ <- with(stormDataClean, CROPDMG * multiplier)
+    stormDataClean$PROPDMGADJ <- with(stormDataClean, PROPDMG * multiplier)
+    
+    #Calculate Total Inflation Adjusted Damage (Property + Crop)
+    stormDataClean$ALLDMGADJ <- with(stormDataClean, CROPDMGADJ + PROPDMGADJ)
+```
+
+### 3.3 Data Exploration
+We did some additional data exploration and found that not all weather events were reported in the year prior to 1996. This can lead us to potentially limiting our data to 1996-2011 for future studies.We use the data for the entire time period(1950-2011) for this analysis.
+
+``` {r exploreData}
+    #Explore Data
+    library(dplyr)
+    test <- stormDataClean %>% group_by(BGN_YEAR,EVTYPE) %>% summarize(total=n())
+    ##with(test, plot(BGN_YEAR,total))
+    #Data was not recorded for all weather events in the years prior to 1996.
+```
+
+## 4. Results
+We report the top 10 weather events in terms of human casualties and economic damages caused
+
+### 4.1 Events with Most Impact on Public Health
+The top 10 weather events in terms of human casualties(Fatalities and Injuries) are computed as follows:
+
+```{r healthDamage, cache=TRUE}
+#Compute Top 10 Casualties (Fatalities and Injuries) Causing Events
+library(tidyr)
+casualtyEvents10 <- stormDataClean %>% 
+    gather(FATALITIES, INJURIES, key = CASUALTYTYPE, value = CASUALTYCOUNT) %>%
+    filter( CASUALTYCOUNT > 0) %>%
+    group_by(EVCATEGORY) %>%
+    summarize(TOTALCASUALTYCOUNT = sum( CASUALTYCOUNT)) %>%
+    arrange(desc(TOTALCASUALTYCOUNT)) %>%
+    top_n(10, TOTALCASUALTYCOUNT) %>%
+    select(1)
+
+casualty10 <- stormDataClean %>%
+    gather(FATALITIES, INJURIES, key = CASUALTYTYPE, value = CASUALTYCOUNT) %>%
+    filter(CASUALTYCOUNT > 0, EVCATEGORY %in% casualtyEvents10$EVCATEGORY) %>%
+    mutate(EVCATEGORY = factor(EVCATEGORY, casualtyEvents10$EVCATEGORY)) %>%
+    group_by(CASUALTYTYPE,EVCATEGORY) %>%
+    summarize(TOTALCASUALTYCOUNT = sum(CASUALTYCOUNT))
+```
+
+The top 10 weather events in terms of human casualties(Fatalities and Injuries) are presented in the chart below:
+
+``` {r healthDamagePlot, results="asis"}
+#Plot
+library(ggplot2)
+ggplot(casualty10, aes(x = reorder(EVCATEGORY,TOTALCASUALTYCOUNT), y = TOTALCASUALTYCOUNT, fill = CASUALTYTYPE)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_light() +
+    theme(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5)) +
+    labs(title = "Fatalities and Injuries by Event Type", 
+         subtitle = "Top 10 Weather Events", 
+         x = "Weather Event",
+         y = "Total Number of Casualties")
+```
+
+**Tornadoes** caused the highest casualties in the US from 1950-2011.
+
+### 4.2 Events with Most Economic Impact
+The top 10 weather events in terms of financial losses(Inflation Adjusted USD Amounts of Crops and Property Damages) are computed as follows:
+
+```{r econDamage, cache=TRUE}
+#Compute Top 10 Total Economic Damage (Crop and Property Damage) Causing Events
+economicDamage10 <- stormDataClean %>% group_by(EVCATEGORY) %>%
+    summarize(TOTALDMGADJ = sum(ALLDMGADJ, na.rm = TRUE)) %>%
+    arrange(desc(TOTALDMGADJ)) %>% top_n(10)
+```
+
+The top 10 weather events in terms of financial losses(Inflation Adjusted USD Amounts of Crops and Property Damages) are presented in the chart below:
+``` {r econDamagePlot, results="asis", fig.align="center"}
+#Plot BarPlot
+par(mfrow = c(1, 2), mar = c(12, 4, 3, 2), mgp = c(3, 1, 0), las=3, cex = 0.8, cex.main = 0.9)
+
+barplot((economicDamage10$TOTALDMGADJ)/(1*1000000000), names.arg=economicDamage10$EVCATEGORY, col="blue", ylab= "Total Economic Damage($ billions)", 
+        main="Inflation Adjusted Financial Damages by Event Type\nTop 10 Weather Events")
+```
+
+**Flood** caused the highest financial damages in the US from 1950-2011.
